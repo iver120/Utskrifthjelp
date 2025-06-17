@@ -69,6 +69,13 @@
             width: 18px;
             height: 18px;
         }
+        .options-area {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+        }
         .actions {
             margin-top: 20px;
         }
@@ -113,6 +120,12 @@
             <ul id="fileList"></ul>
             <div id="status"></div>
     
+            <!-- NYTT: Valg for blank side -->
+            <div class="options-area">
+                <input type="checkbox" id="insertBlankPageCheckbox" style="margin-right: 10px;">
+                <label for="insertBlankPageCheckbox">Legg til en blank side mellom hver fil (for tosidig utskrift)</label>
+            </div>
+
             <div class="actions">
                 <button id="printBtn">Skriv ut valgte</button>
                 <button id="downloadBtn">Last ned valgte</button>
@@ -131,10 +144,10 @@
         const downloadBtn = document.getElementById('downloadBtn');
         const status = document.getElementById('status');
         const loader = document.getElementById('loader');
+        const insertBlankPageCheckbox = document.getElementById('insertBlankPageCheckbox'); // Referanse til ny checkbox
 
-        let allFiles = []; // Lagrer {file, name} for alle funnede filer
+        let allFiles = [];
 
-        // 1. FORBEDRING: Velg Mappe og vis filer med checkboxer
         selectFolderBtn.addEventListener('click', async () => {
             try {
                 const dirHandle = await window.showDirectoryPicker();
@@ -150,7 +163,7 @@
                 }
                 
                 if (allFiles.length > 0) {
-                    allFiles.sort((a, b) => a.name.localeCompare(b.name)); // Sorter alfabetisk
+                    allFiles.sort((a, b) => a.name.localeCompare(b.name));
                     displayFiles();
                     fileSelectionArea.style.display = 'block';
                 } else {
@@ -172,13 +185,11 @@
                 fileList.appendChild(listItem);
             });
             updateStatus();
-            // Legg til event listener for hver checkbox
             document.querySelectorAll('#fileList input[type="checkbox"]').forEach(cb => {
                 cb.addEventListener('change', updateStatus);
             });
         }
         
-        // 2. FORBEDRING: Velg alle / Fjern valg-knapp
         toggleSelectAllBtn.addEventListener('click', () => {
             const checkboxes = document.querySelectorAll('#fileList input[type="checkbox"]');
             const allChecked = Array.from(checkboxes).every(cb => cb.checked);
@@ -186,20 +197,15 @@
             updateStatus();
         });
 
-        // 3. FORBEDRING: Dynamisk status-tekst
         function updateStatus() {
             const selectedCount = document.querySelectorAll('#fileList input:checked').length;
             status.textContent = `${selectedCount} av ${allFiles.length} filer er valgt.`;
-            
-            const allSelected = selectedCount === allFiles.length;
-            toggleSelectAllBtn.textContent = allSelected ? 'Fjern valg' : 'Velg alle';
-            
+            toggleSelectAllBtn.textContent = (selectedCount === allFiles.length && allFiles.length > 0) ? 'Fjern valg' : 'Velg alle';
             const hasSelection = selectedCount > 0;
             printBtn.disabled = !hasSelection;
             downloadBtn.disabled = !hasSelection;
         }
 
-        // Hent valgte filer
         function getSelectedFiles() {
             const selectedFiles = [];
             document.querySelectorAll('#fileList input:checked').forEach(cb => {
@@ -208,7 +214,6 @@
             return selectedFiles;
         }
 
-        // Funksjon for å slå sammen og behandle filer
         async function processFiles(action) {
             const filesToProcess = getSelectedFiles();
             if (filesToProcess.length === 0) {
@@ -220,12 +225,24 @@
 
             try {
                 const mergedPdf = await PDFLib.PDFDocument.create();
-                for (const file of filesToProcess) {
+                const shouldInsertBlank = insertBlankPageCheckbox.checked;
+
+                // NY LOGIKK: Loop med index for å vite når vi skal sette inn blank side
+                for (let i = 0; i < filesToProcess.length; i++) {
+                    const file = filesToProcess[i];
                     const fileBytes = await file.arrayBuffer();
-                    const pdf = await PDFLib.PDFDocument.load(fileBytes, { ignoreEncryption: true }); // Ignorerer passordbeskyttede filer
+                    const pdf = await PDFLib.PDFDocument.load(fileBytes, { ignoreEncryption: true });
                     const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
                     copiedPages.forEach(page => mergedPdf.addPage(page));
+
+                    // Legg til blank side HVIS valgt og det IKKE er den siste filen
+                    if (shouldInsertBlank && i < filesToProcess.length - 1) {
+                        const lastPage = mergedPdf.getPage(mergedPdf.getPageCount() - 1);
+                        const { width, height } = lastPage.getSize();
+                        mergedPdf.addPage([width, height]); // Legger til en blank side med samme dimensjoner
+                    }
                 }
+                
                 const mergedPdfBytes = await mergedPdf.save();
                 const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
 
@@ -237,14 +254,10 @@
                     iframe.onload = () => {
                         try {
                             iframe.contentWindow.print();
-                        } catch (e) {
-                            console.error("Utskriftsfeil:", e);
-                            alert("Kunne ikke åpne utskriftsdialog. Sjekk konsollen for feil.");
-                        }
+                        } catch (e) { console.error("Utskriftsfeil:", e); }
                     };
                     document.body.appendChild(iframe);
                 } else if (action === 'download') {
-                    // 4. FORBEDRING: Last ned-funksjon
                     const link = document.createElement('a');
                     link.href = URL.createObjectURL(blob);
                     link.download = 'sammenslått-dokument.pdf';
@@ -253,14 +266,13 @@
                     document.body.removeChild(link);
                 }
             } catch (err) {
-                console.error("En feil oppstod under sammenslåing:", err);
-                alert("En feil oppstod. En av PDF-filene kan være korrupt eller passordbeskyttet. Se konsollen for detaljer.");
+                console.error("Feil under sammenslåing:", err);
+                alert("En feil oppstod. En av PDF-filene kan være korrupt eller passordbeskyttet. Se konsollen.");
             } finally {
                 setLoading(false);
             }
         }
         
-        // 5. FORBEDRING: Bedre visuell tilbakemelding (loading state)
         function setLoading(isLoading) {
             loader.style.display = isLoading ? 'block' : 'none';
             printBtn.disabled = isLoading;
