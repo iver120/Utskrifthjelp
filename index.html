@@ -3,117 +3,273 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PDF Utskriftsverktøy</title>
-    <!-- IMPORTER PDF-LIB BIBLIOTEKET -->
+    <title>Forbedret PDF Verktøy</title>
     <script src="https://unpkg.com/pdf-lib"></script>
     <style>
-        /* Samme stil som før */
-        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
-        button { padding: 10px 15px; font-size: 16px; cursor: pointer; margin-right: 10px; border-radius: 5px; border: 1px solid #007bff; background-color: #007bff; color: white; }
-        button:hover { background-color: #0056b3; }
-        #fileList { list-style-type: none; padding: 0; }
-        #fileList li { padding: 8px; border-bottom: 1px solid #eee; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .container {
+            background-color: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            border: none;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .file-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #fileList {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        #fileList li {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+        }
+        #fileList li:last-child {
+            border-bottom: none;
+        }
+        #fileList input {
+            margin-right: 15px;
+            width: 18px;
+            height: 18px;
+        }
+        .actions {
+            margin-top: 20px;
+        }
+        .actions button {
+            margin-right: 10px;
+        }
+        .loader {
+            display: none; /* Skjult som standard */
+            margin-left: 15px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #status {
+            margin-top: 15px;
+            font-style: italic;
+            color: #555;
+        }
     </style>
 </head>
 <body>
 
-    <h1>Verktøy for PDF-utskrift</h1>
-    <p>Velg en mappe for å liste alle PDF-filer. Deretter kan du skrive dem ut samlet.</p>
+    <div class="container">
+        <h1>PDF Verktøy</h1>
+        <p>Velg en mappe, marker PDF-filene du vil behandle, og velg deretter om du vil skrive ut eller laste ned.</p>
+    
+        <button id="selectFolderBtn">Velg Mappe</button>
+    
+        <div id="file-selection-area" style="display:none;">
+            <div class="file-list-header">
+                <h2>Velg filer</h2>
+                <button id="toggleSelectAllBtn" style="font-size: 14px;">Velg alle</button>
+            </div>
+            
+            <ul id="fileList"></ul>
+            <div id="status"></div>
+    
+            <div class="actions">
+                <button id="printBtn">Skriv ut valgte</button>
+                <button id="downloadBtn">Last ned valgte</button>
+                <div class="loader" id="loader"></div>
+            </div>
+        </div>
+    </div>
 
-    <button id="selectFolderBtn">Velg Mappe</button>
-    <button id="printAllBtn" style="display:none;">Skriv ut alle samlet</button>
-
-    <h2>PDF-filer i valgt mappe:</h2>
-    <ul id="fileList"></ul>
 
     <script>
         const selectFolderBtn = document.getElementById('selectFolderBtn');
-        const printAllBtn = document.getElementById('printAllBtn');
+        const fileSelectionArea = document.getElementById('file-selection-area');
         const fileList = document.getElementById('fileList');
-        let pdfFiles = [];
+        const toggleSelectAllBtn = document.getElementById('toggleSelectAllBtn');
+        const printBtn = document.getElementById('printBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const status = document.getElementById('status');
+        const loader = document.getElementById('loader');
 
-        // Henter tilgang til en mappe valgt av brukeren
+        let allFiles = []; // Lagrer {file, name} for alle funnede filer
+
+        // 1. FORBEDRING: Velg Mappe og vis filer med checkboxer
         selectFolderBtn.addEventListener('click', async () => {
             try {
                 const dirHandle = await window.showDirectoryPicker();
                 fileList.innerHTML = '';
-                pdfFiles = [];
-                printAllBtn.style.display = 'none';
-                
+                allFiles = [];
+                fileSelectionArea.style.display = 'none';
+
                 for await (const entry of dirHandle.values()) {
                     if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.pdf')) {
                         const file = await entry.getFile();
-                        pdfFiles.push(file);
-                        const listItem = document.createElement('li');
-                        listItem.textContent = entry.name;
-                        fileList.appendChild(listItem);
+                        allFiles.push({ file: file, name: entry.name });
                     }
                 }
                 
-                if (pdfFiles.length > 0) {
-                    printAllBtn.style.display = 'inline-block';
+                if (allFiles.length > 0) {
+                    allFiles.sort((a, b) => a.name.localeCompare(b.name)); // Sorter alfabetisk
+                    displayFiles();
+                    fileSelectionArea.style.display = 'block';
                 } else {
-                    fileList.innerHTML = '<li>Ingen PDF-filer funnet i denne mappen.</li>';
+                    alert('Ingen PDF-filer funnet i denne mappen.');
                 }
             } catch (err) {
-                if (err.name !== 'AbortError') {
-                    console.error('Feil ved valg av mappe:', err);
-                }
+                if (err.name !== 'AbortError') console.error('Feil ved valg av mappe:', err);
             }
         });
 
-        // Event listener for utskrift - NÅ MED PDF-SAMMENSLÅING
-        printAllBtn.addEventListener('click', async () => {
-            if (pdfFiles.length === 0) {
-                alert('Ingen PDF-filer å skrive ut.');
+        function displayFiles() {
+            fileList.innerHTML = '';
+            allFiles.forEach((fileInfo, index) => {
+                const listItem = document.createElement('li');
+                listItem.innerHTML = `
+                    <input type="checkbox" id="file-${index}" data-index="${index}" checked>
+                    <label for="file-${index}">${fileInfo.name}</label>
+                `;
+                fileList.appendChild(listItem);
+            });
+            updateStatus();
+            // Legg til event listener for hver checkbox
+            document.querySelectorAll('#fileList input[type="checkbox"]').forEach(cb => {
+                cb.addEventListener('change', updateStatus);
+            });
+        }
+        
+        // 2. FORBEDRING: Velg alle / Fjern valg-knapp
+        toggleSelectAllBtn.addEventListener('click', () => {
+            const checkboxes = document.querySelectorAll('#fileList input[type="checkbox"]');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            checkboxes.forEach(cb => cb.checked = !allChecked);
+            updateStatus();
+        });
+
+        // 3. FORBEDRING: Dynamisk status-tekst
+        function updateStatus() {
+            const selectedCount = document.querySelectorAll('#fileList input:checked').length;
+            status.textContent = `${selectedCount} av ${allFiles.length} filer er valgt.`;
+            
+            const allSelected = selectedCount === allFiles.length;
+            toggleSelectAllBtn.textContent = allSelected ? 'Fjern valg' : 'Velg alle';
+            
+            const hasSelection = selectedCount > 0;
+            printBtn.disabled = !hasSelection;
+            downloadBtn.disabled = !hasSelection;
+        }
+
+        // Hent valgte filer
+        function getSelectedFiles() {
+            const selectedFiles = [];
+            document.querySelectorAll('#fileList input:checked').forEach(cb => {
+                selectedFiles.push(allFiles[cb.dataset.index].file);
+            });
+            return selectedFiles;
+        }
+
+        // Funksjon for å slå sammen og behandle filer
+        async function processFiles(action) {
+            const filesToProcess = getSelectedFiles();
+            if (filesToProcess.length === 0) {
+                alert('Ingen filer er valgt.');
                 return;
             }
 
-            printAllBtn.textContent = 'Jobber...';
-            printAllBtn.disabled = true;
+            setLoading(true);
 
             try {
-                // 1. Lag et nytt, tomt PDF-dokument
                 const mergedPdf = await PDFLib.PDFDocument.create();
-
-                // 2. Gå gjennom hver fil, last den inn og kopier sidene over til det nye dokumentet[4]
-                for (const file of pdfFiles) {
+                for (const file of filesToProcess) {
                     const fileBytes = await file.arrayBuffer();
-                    const pdf = await PDFLib.PDFDocument.load(fileBytes);
+                    const pdf = await PDFLib.PDFDocument.load(fileBytes, { ignoreEncryption: true }); // Ignorerer passordbeskyttede filer
                     const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-                    copiedPages.forEach((page) => {
-                        mergedPdf.addPage(page);
-                    });
+                    copiedPages.forEach(page => mergedPdf.addPage(page));
                 }
-
-                // 3. Lagre det sammenslåtte dokumentet som en byte-array
                 const mergedPdfBytes = await mergedPdf.save();
-
-                // 4. Konverter til en Blob og skriv ut
                 const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
-                const blobUrl = URL.createObjectURL(blob);
 
-                const iframe = document.createElement('iframe');
-                iframe.style.display = 'none';
-                iframe.src = blobUrl;
-
-                iframe.onload = () => {
-                    try {
-                        iframe.contentWindow.print();
-                    } catch (e) {
-                        console.error("Kunne ikke skrive ut samlet fil:", e);
-                    }
-                };
-                document.body.appendChild(iframe);
-
+                if (action === 'print') {
+                    const blobUrl = URL.createObjectURL(blob);
+                    const iframe = document.createElement('iframe');
+                    iframe.style.display = 'none';
+                    iframe.src = blobUrl;
+                    iframe.onload = () => {
+                        try {
+                            iframe.contentWindow.print();
+                        } catch (e) {
+                            console.error("Utskriftsfeil:", e);
+                            alert("Kunne ikke åpne utskriftsdialog. Sjekk konsollen for feil.");
+                        }
+                    };
+                    document.body.appendChild(iframe);
+                } else if (action === 'download') {
+                    // 4. FORBEDRING: Last ned-funksjon
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'sammenslått-dokument.pdf';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
             } catch (err) {
-                console.error("En feil oppstod under sammenslåing av PDF-er:", err);
-                alert("En feil oppstod. Se konsollen for detaljer.");
+                console.error("En feil oppstod under sammenslåing:", err);
+                alert("En feil oppstod. En av PDF-filene kan være korrupt eller passordbeskyttet. Se konsollen for detaljer.");
             } finally {
-                printAllBtn.textContent = 'Skriv ut alle samlet';
-                printAllBtn.disabled = false;
+                setLoading(false);
             }
-        });
+        }
+        
+        // 5. FORBEDRING: Bedre visuell tilbakemelding (loading state)
+        function setLoading(isLoading) {
+            loader.style.display = isLoading ? 'block' : 'none';
+            printBtn.disabled = isLoading;
+            downloadBtn.disabled = isLoading;
+            selectFolderBtn.disabled = isLoading;
+        }
+
+        printBtn.addEventListener('click', () => processFiles('print'));
+        downloadBtn.addEventListener('click', () => processFiles('download'));
     </script>
 
 </body>
