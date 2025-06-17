@@ -4,48 +4,24 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PDF Utskriftsverktøy</title>
+    <!-- IMPORTER PDF-LIB BIBLIOTEKET -->
+    <script src="https://unpkg.com/pdf-lib"></script>
     <style>
-        body {
-            font-family: sans-serif;
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 20px;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-        }
-        h1, h2 {
-            color: #333;
-        }
-        button {
-            padding: 10px 15px;
-            font-size: 16px;
-            cursor: pointer;
-            margin-right: 10px;
-            border-radius: 5px;
-            border: 1px solid #007bff;
-            background-color: #007bff;
-            color: white;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        #fileList {
-            list-style-type: none;
-            padding: 0;
-        }
-        #fileList li {
-            padding: 8px;
-            border-bottom: 1px solid #eee;
-        }
+        /* Samme stil som før */
+        body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; border: 1px solid #ccc; border-radius: 8px; }
+        button { padding: 10px 15px; font-size: 16px; cursor: pointer; margin-right: 10px; border-radius: 5px; border: 1px solid #007bff; background-color: #007bff; color: white; }
+        button:hover { background-color: #0056b3; }
+        #fileList { list-style-type: none; padding: 0; }
+        #fileList li { padding: 8px; border-bottom: 1px solid #eee; }
     </style>
 </head>
 <body>
 
     <h1>Verktøy for PDF-utskrift</h1>
-    <p>Velg en mappe for å liste alle PDF-filer. Deretter kan du skrive dem ut.</p>
+    <p>Velg en mappe for å liste alle PDF-filer. Deretter kan du skrive dem ut samlet.</p>
 
     <button id="selectFolderBtn">Velg Mappe</button>
-    <button id="printAllBtn" style="display:none;">Skriv ut alle</button>
+    <button id="printAllBtn" style="display:none;">Skriv ut alle samlet</button>
 
     <h2>PDF-filer i valgt mappe:</h2>
     <ul id="fileList"></ul>
@@ -54,26 +30,20 @@
         const selectFolderBtn = document.getElementById('selectFolderBtn');
         const printAllBtn = document.getElementById('printAllBtn');
         const fileList = document.getElementById('fileList');
-        let pdfFiles = []; // Lagrer fil-håndtakene
+        let pdfFiles = [];
 
-        // Henter tilgang til en mappe valgt av brukeren[9]
+        // Henter tilgang til en mappe valgt av brukeren
         selectFolderBtn.addEventListener('click', async () => {
             try {
-                // Viser en dialogboks der brukeren kan velge en mappe[10]
                 const dirHandle = await window.showDirectoryPicker();
-                
-                // Tømmer listen og fil-arrayet for nye søk
                 fileList.innerHTML = '';
                 pdfFiles = [];
-
-                // Går gjennom alle filene i den valgte mappen[9]
+                printAllBtn.style.display = 'none';
+                
                 for await (const entry of dirHandle.values()) {
-                    // Sjekker om objektet er en fil og slutter på .pdf[5]
                     if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.pdf')) {
                         const file = await entry.getFile();
-                        pdfFiles.push(file); // Legger til filen i arrayet
-
-                        // Lager et liste-element for å vise filnavnet
+                        pdfFiles.push(file);
                         const listItem = document.createElement('li');
                         listItem.textContent = entry.name;
                         fileList.appendChild(listItem);
@@ -81,49 +51,68 @@
                 }
                 
                 if (pdfFiles.length > 0) {
-                    printAllBtn.style.display = 'inline-block'; // Viser utskriftsknappen
+                    printAllBtn.style.display = 'inline-block';
                 } else {
                     fileList.innerHTML = '<li>Ingen PDF-filer funnet i denne mappen.</li>';
-                    printAllBtn.style.display = 'none';
                 }
-
             } catch (err) {
-                console.error('Feil ved valg av mappe:', err);
-                // Ignorerer feil som oppstår hvis brukeren lukker dialogboksen
                 if (err.name !== 'AbortError') {
-                    alert('Kunne ikke få tilgang til mappen. Sørg for at du bruker en støttet nettleser (Chrome/Edge).');
+                    console.error('Feil ved valg av mappe:', err);
                 }
             }
         });
 
-        // Funksjon for å skrive ut alle valgte PDF-filer[14]
-        printAllBtn.addEventListener('click', () => {
+        // Event listener for utskrift - NÅ MED PDF-SAMMENSLÅING
+        printAllBtn.addEventListener('click', async () => {
             if (pdfFiles.length === 0) {
                 alert('Ingen PDF-filer å skrive ut.');
                 return;
             }
 
-            alert(`Du har valgt å skrive ut ${pdfFiles.length} filer. Du må bekrefte hver utskriftsdialog som dukker opp.`);
+            printAllBtn.textContent = 'Jobber...';
+            printAllBtn.disabled = true;
 
-            pdfFiles.forEach(file => {
-                const blobUrl = URL.createObjectURL(file);
-                
-                // Åpner hver PDF i en skjult iframe og starter utskrift[7]
+            try {
+                // 1. Lag et nytt, tomt PDF-dokument
+                const mergedPdf = await PDFLib.PDFDocument.create();
+
+                // 2. Gå gjennom hver fil, last den inn og kopier sidene over til det nye dokumentet[4]
+                for (const file of pdfFiles) {
+                    const fileBytes = await file.arrayBuffer();
+                    const pdf = await PDFLib.PDFDocument.load(fileBytes);
+                    const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+                    copiedPages.forEach((page) => {
+                        mergedPdf.addPage(page);
+                    });
+                }
+
+                // 3. Lagre det sammenslåtte dokumentet som en byte-array
+                const mergedPdfBytes = await mergedPdf.save();
+
+                // 4. Konverter til en Blob og skriv ut
+                const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+                const blobUrl = URL.createObjectURL(blob);
+
                 const iframe = document.createElement('iframe');
                 iframe.style.display = 'none';
                 iframe.src = blobUrl;
-                
+
                 iframe.onload = () => {
                     try {
                         iframe.contentWindow.print();
                     } catch (e) {
-                        console.error("Kunne ikke skrive ut fil:", file.name, e);
-                        alert(`Kunne ikke skrive ut ${file.name}. Nettleseren kan ha sikkerhetsrestriksjoner.`);
+                        console.error("Kunne ikke skrive ut samlet fil:", e);
                     }
-                    // URL.revokeObjectURL(blobUrl); // Kan forårsake problemer hvis utskriften tar tid
                 };
                 document.body.appendChild(iframe);
-            });
+
+            } catch (err) {
+                console.error("En feil oppstod under sammenslåing av PDF-er:", err);
+                alert("En feil oppstod. Se konsollen for detaljer.");
+            } finally {
+                printAllBtn.textContent = 'Skriv ut alle samlet';
+                printAllBtn.disabled = false;
+            }
         });
     </script>
 
